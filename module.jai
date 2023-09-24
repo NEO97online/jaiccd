@@ -21,3 +21,10 @@ size_t :: u64;
 _ccd_prefetch :: (a: Any) {}
 
 #load "ccd.jai";
+#load "alloc.jai";
+#load "list.jai";
+#load "vec3.jai";
+#load "simplex.jai";
+#load "support.jai";
+#load "polytope.jai";
+#load "mpr.jai";

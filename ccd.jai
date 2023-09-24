@@ -15,13 +15,6 @@
  *  See the License for more information.
  */
 
-#load "alloc.jai";
-#load "list.jai";
-#load "vec3.jai";
-#load "simplex.jai";
-#load "support.jai";
-#load "polytope.jai";
-
 /**
  * Type of *support* function that takes pointer to 3D object and direction
  * and returns (via vec argument) furthest point from object in specified
