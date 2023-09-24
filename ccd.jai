@@ -15,6 +15,7 @@
  *  See the License for more information.
  */
 
+#load "alloc.jai";
 #load "list.jai";
 #load "vec3.jai";
 #load "simplex.jai";
@@ -26,30 +27,30 @@
  * and returns (via vec argument) furthest point from object in specified
  * direction.
  */
-ccd_support_fn :: #type (obj: *void, dir: *Vector3, vec: *Vector3);
+CCD_SupportFn :: #type (obj: *void, dir: *Vector3, vec: *Vector3);
 
 /**
  * Returns (via dir argument) first direction vector that will be used in
  * initialization of algorithm.
  */
-ccd_first_dir_fn :: #type (obj1: *void, obj2: *void, dir: *Vector3);
+CCD_FirstDirFn :: #type (obj1: *void, obj2: *void, dir: *Vector3);
 
 /**
  * Returns (via center argument) geometric center (some point near center)
  * of given object.
  */
-ccd_center_fn :: #type (obj: *void, center: *Vector3);
+CCD_CenterFn :: #type (obj: *void, center: *Vector3);
 
 /**
  * Main structure of CCD algorithm.
  */
-ccd_t :: struct {
-    first_dir: ccd_first_dir_fn;    //!< Returns initial direction where first support point will be searched
-    support1: ccd_support_fn;       //!< Function that returns support point of first object
-    support2: ccd_support_fn;       //!< Function that returns support point of second object
+CCD_Config :: struct {
+    first_dir: CCD_FirstDirFn;    //!< Returns initial direction where first support point will be searched
+    support1: CCD_SupportFn;       //!< Function that returns support point of first object
+    support2: CCD_SupportFn;       //!< Function that returns support point of second object
 
-    center1: ccd_center_fn;         //!< Function that returns geometric center of first object
-    center2: ccd_center_fn;         //!< Function that returns geometric center of second object
+    center1: CCD_CenterFn;         //!< Function that returns geometric center of first object
+    center2: CCD_CenterFn;         //!< Function that returns geometric center of second object
 
     max_iterations: u64;            //!< Maximal number of iterations
     epa_tolerance: ccd_real_t;
@@ -61,14 +62,14 @@ ccdFirstDirDefault :: (o1: *void, o2: *void, dir: *Vector3) {
     dir.* = xyz(1, 0, 0);
 }
 
-ccdGJKIntersect :: (obj1: *void, obj2: *void, ccd: *ccd_t) -> bool {
-    simplex: ccd_simplex_t;
+ccdGJKIntersect :: (obj1: *void, obj2: *void, ccd: *CCD_Config) -> int {
+    simplex: CCD_Simplex;
     return __ccdGJK(obj1, obj2, ccd, *simplex);
 }
 
-ccdGJKSeparate :: (obj1: *void, obj2: *void, ccd: *ccd_t, sep: *Vector3) -> bool {
-    polytope: ccd_pt_t;
-    nearest: *ccd_pt_el_t;
+ccdGJKSeparate :: (obj1: *void, obj2: *void, ccd: *CCD_Config, sep: *Vector3) -> bool {
+    polytope: CCD_Polytope;
+    nearest: *CCD_PolytopeElement;
     ret: int;
 
     ccdPtInit(*polytope);
@@ -85,11 +86,7 @@ ccdGJKSeparate :: (obj1: *void, obj2: *void, ccd: *ccd_t, sep: *Vector3) -> bool
 }
 
 
-penEPAPosCmp :: (a: *void, b: *void) -> int {
-    v1, v2: *ccd_pt_vertex_t;
-    v1 = *cast(**ccd_pt_vertex_t)a;
-    v2 = *cast(**ccd_pt_vertex_t)b;
-
+penEPAPosCmp :: (v1: *CCD_PolytopeVertex, v2: *CCD_PolytopeVertex) -> int {
     if (ccdEq(v1.dist, v2.dist)){
         return 0;
     }else if (v1.dist < v2.dist){
@@ -99,29 +96,28 @@ penEPAPosCmp :: (a: *void, b: *void) -> int {
     }
 }
 
-penEPAPos :: (pt: *ccd_pt_t, nearest: *ccd_pt_el_t, pos: *Vector3) {
-    v: *ccd_pt_vertex_t;
-    vs: **ccd_pt_vertex_t;
+penEPAPos :: (pt: *CCD_Polytope, nearest: *CCD_PolytopeElement, pos: *Vector3) -> int {
+    v: *CCD_PolytopeVertex;
+    vs: [..] *CCD_PolytopeVertex;
+    vs.allocator = temp;
     i, len: size_t;
     scale: ccd_real_t;
 
     // compute median
     len = 0;
-    ccdListForEachEntry(*pt.vertices, v, ccd_pt_vertex_t, list, #code {
+    ccdListForEachEntry(*pt.vertices, *v, CCD_PolytopeVertex, #code {
         len += 1;
     });
 
-    vs = CCD_ALLOC_ARR(*ccd_pt_vertex_t, len);
-    if (vs == null)
-        return -1;
+    array_resize(*vs, xx len);
 
     i = 0;
-    ccdListForEachEntry(*pt.vertices, v, ccd_pt_vertex_t, list, #code {
+    ccdListForEachEntry(*pt.vertices, *v, CCD_PolytopeVertex, #code {
         vs[i] = v;
         i += 1;
     });
 
-    qsort(vs, len, size_of(*ccd_pt_vertex_t), penEPAPosCmp);
+    quick_sort(vs, (a, b) => penEPAPosCmp(a, b));
 
     ccdVec3Set(pos, CCD_ZERO, CCD_ZERO, CCD_ZERO);
     scale = CCD_ZERO;
@@ -135,14 +131,31 @@ penEPAPos :: (pt: *ccd_pt_t, nearest: *ccd_pt_el_t, pos: *Vector3) {
     }
     ccdVec3Scale(pos, CCD_ONE / scale);
 
-    free(vs);
+    array_free(vs);
 
     return 0;
 }
 
-ccdGJKPenetration :: (obj1: *void, obj2: *void, ccd: *ccd_t, depth: *ccd_real_t, dir: *Vector3, pos: *Vector3) -> int {
-    polytope: ccd_pt_t;
-    nearest: *ccd_pt_el_t;
+total_runtime_num_iterations := 0;
+faces_added   := 0;
+faces_removed := 0;
+edges_added   := 0;
+edges_removed := 0;
+verts_added   := 0;
+verts_removed := 0;
+
+ccdGJKPenetration :: (obj1: *void, obj2: *void, ccd: *CCD_Config, depth: *ccd_real_t, dir: *Vector3, pos: *Vector3) -> int {
+    // print("[ccdGJKPenetration %]=============\n", total_runtime_num_iterations);
+    total_runtime_num_iterations+=1;
+    faces_added   = 0;
+    faces_removed = 0;
+    edges_added   = 0;
+    edges_removed = 0;
+    verts_added   = 0;
+    verts_removed = 0;
+
+    polytope: CCD_Polytope;
+    nearest: *CCD_PolytopeElement;
     ret: int;
 
     ccdPtInit(*polytope);
@@ -161,21 +174,28 @@ ccdGJKPenetration :: (obj1: *void, obj2: *void, ccd: *ccd_t, depth: *ccd_real_t,
         // compute position
         if (penEPAPos(*polytope, nearest, pos) != 0){
             ccdPtDestroy(*polytope);
+            assert(false);
             return -2;
         }
     }
 
     ccdPtDestroy(*polytope);
 
+    // print("faces leaked: %\n", faces_added - faces_removed);
+    // print("edges leaked: %\n", edges_added - edges_removed);
+    // print("verts leaked: %\n", verts_added - verts_removed);
+
+    // print("\n_______________________________________________\n");
+
     return ret;
 }
 
 /** Performs GJK algorithm. Returns 0 if intersection was found and simplex
  *  is filled with resulting polytope. */
-__ccdGJK :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simplex_t) -> bool {
+__ccdGJK :: (obj1: *void, obj2: *void, ccd: *CCD_Config, simplex: *CCD_Simplex) -> int {
     iterations: u64;
     dir: Vector3; // direction vector
-    last: ccd_support_t; // last support point
+    last: CCD_Support; // last support point
     do_simplex_res: int;
 
     // initialize simplex struct
@@ -201,7 +221,7 @@ __ccdGJK :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simplex_t) -> 
         // isn't somewhere before origin (the test on negative dot product)
         // - because if it is, objects are not intersecting at all.
         if (ccdVec3Dot(*last.v, *dir) < CCD_ZERO){
-            return false; // intersection not found
+            return -1; // intersection not found
         }
 
         // add last support vector to simplex
@@ -211,26 +231,26 @@ __ccdGJK :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simplex_t) -> 
         // intersect and 0 if algorithm should continue
         do_simplex_res = doSimplex(simplex, *dir);
         if (do_simplex_res == 1){
-            return true; // intersection found
+            return 0; // intersection found
         }else if (do_simplex_res == -1){
-            return false; // intersection not found
+            return -1; // intersection not found
         }
 
         if (ccdIsZero(ccdVec3Len2(*dir))){
-            return false; // intersection not found
+            return -1; // intersection not found
         }
     }
 
     // intersection wasn't found
-    return false;
+    return -1;
 }
 
 /** Performs GJK+EPA algorithm. Returns 0 if intersection was found and
  *  pt is filled with resulting polytope and nearest with pointer to
  *  nearest element (vertex, edge, face) of polytope to origin. */
-__ccdGJKEPA :: (obj1: *void, obj2: *void, ccd: *ccd_t, polytope: *ccd_pt_t, nearest: **ccd_pt_el_t) -> int {
-    simplex: ccd_simplex_t;
-    supp: ccd_support_t; // support point
+__ccdGJKEPA :: (obj1: *void, obj2: *void, ccd: *CCD_Config, polytope: *CCD_Polytope, nearest: **CCD_PolytopeElement) -> int {
+    simplex: CCD_Simplex;
+    supp: CCD_Support; // support point
     ret, size: int;
 
     nearest.* = null;
@@ -260,23 +280,31 @@ __ccdGJKEPA :: (obj1: *void, obj2: *void, ccd: *ccd_t, polytope: *ccd_pt_t, near
 
 
     while (1){
+        // JAI: @Bug: when the player is moving on the X/Z axis, we're getting stuck in this loop... seems to not happen on the Y axis
+
         // get triangle nearest to origin
         nearest.* = ccdPtNearest(polytope);
 
         // get next support point
-        if (nextSupport(obj1, obj2, ccd, *nearest, *supp) != 0)
+        next_support := nextSupport(obj1, obj2, ccd, nearest.*, *supp);
+        if (next_support != 0) {
+            // print("nextSupport != 0\n");
             break;
+        }
 
         // expand nearest triangle using new point - supp
-        if (expandPolytope(polytope, *nearest, *supp) != 0)
+        if (expandPolytope(polytope, nearest.*, *supp) != 0) {
+            // print ("expandPolytope != 0\n");
+            assert(false);
             return -2;
+        }
     }
 
     return 0;
 }
 
-doSimplex2 :: (simplex: *ccd_simplex_t, dir: *Vector3) -> int {
-    A, B: *ccd_support_t;
+doSimplex2 :: (simplex: *CCD_Simplex, dir: *Vector3) -> int {
+    A, B: *CCD_Support;
     AB, AO, tmp: Vector3;
     dot: ccd_real_t;
 
@@ -316,8 +344,8 @@ doSimplex2 :: (simplex: *ccd_simplex_t, dir: *Vector3) -> int {
     return 0;
 }
 
-doSimplex3 :: (simplex: *ccd_simplex_t, dir: *Vector3) -> int {
-    A, B, C: *ccd_support_t;
+doSimplex3 :: (simplex: *CCD_Simplex, dir: *Vector3) -> int {
+    A, B, C: *CCD_Support;
     AO, AB, AC, ABC, tmp: Vector3;
     dot, dist: ccd_real_t;
 
@@ -393,7 +421,7 @@ doSimplex3 :: (simplex: *ccd_simplex_t, dir: *Vector3) -> int {
             if (ccdIsZero(dot) || dot > CCD_ZERO){
                 ccdVec3Copy(dir, *ABC);
             }else{
-                Ctmp: ccd_support_t;
+                Ctmp: CCD_Support;
                 ccdSupportCopy(*Ctmp, C);
                 ccdSimplexSet(simplex, 0, B);
                 ccdSimplexSet(simplex, 1, *Ctmp);
@@ -407,8 +435,8 @@ doSimplex3 :: (simplex: *ccd_simplex_t, dir: *Vector3) -> int {
     return 0;
 }
 
-doSimplex4 :: (simplex: *ccd_simplex_t, dir: *Vector3) -> int {
-    A, B, C, D: *ccd_support_t;
+doSimplex4 :: (simplex: *CCD_Simplex, dir: *Vector3) -> int {
+    A, B, C, D: *CCD_Support;
     AO, AB, AC, AD, ABC, ACD, ADB: Vector3;
     B_on_ACD, C_on_ADB, D_on_ABC: int;
     AB_O, AC_O, AD_O: bool;
@@ -498,7 +526,7 @@ doSimplex4 :: (simplex: *ccd_simplex_t, dir: *Vector3) -> int {
 /** Returns true if simplex contains origin.
  *  This function also alteres simplex and dir according to further
  *  processing of GJK algorithm. */
-doSimplex :: (simplex: *ccd_simplex_t, dir: *Vector3) -> int {
+doSimplex :: (simplex: *CCD_Simplex, dir: *Vector3) -> int {
     if (ccdSimplexSize(simplex) == 2){
         // simplex contains segment only one segment
         return doSimplex2(simplex, dir);
@@ -521,13 +549,13 @@ tripleCross :: inline (a: *Vector3, b: *Vector3, c: *Vector3, d: *Vector3) {
 
 /** Transforms simplex to polytope. It is assumed that simplex has 4
  *  vertices! */
-simplexToPolytope4 :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simplex_t, pt: *ccd_pt_t, nearest: **ccd_pt_el_t) -> int
+simplexToPolytope4 :: (obj1: *void, obj2: *void, ccd: *CCD_Config, simplex: *CCD_Simplex, pt: *CCD_Polytope, nearest: **CCD_PolytopeElement) -> int
 {
-    a, b, c, d: *ccd_support_t;
+    a, b, c, d: *CCD_Support;
     use_polytope3: int;
     dist: ccd_real_t;
-    v: [4] *ccd_pt_vertex_t;
-    e: [6] *ccd_pt_edge_t;
+    v: [4] *CCD_PolytopeVertex;
+    e: [6] *CCD_PolytopeEdge;
     i: size_t;
 
     a = ccdSimplexPoint(simplex, 0);
@@ -593,12 +621,12 @@ simplexToPolytope4 :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simp
 }
 
 /** Transforms simplex to polytope, three vertices required */
-simplexToPolytope3 :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simplex_t, pt: *ccd_pt_t, nearest: **ccd_pt_el_t) -> int {
-    a, b, c: *ccd_support_t;
-    d, d2: ccd_support_t;
+simplexToPolytope3 :: (obj1: *void, obj2: *void, ccd: *CCD_Config, simplex: *CCD_Simplex, pt: *CCD_Polytope, nearest: **CCD_PolytopeElement) -> int {
+    a, b, c: *CCD_Support;
+    d, d2: CCD_Support;
     ab, ac, dir: Vector3;
-    v: [5] *ccd_pt_vertex_t;
-    e: [9] *ccd_pt_edge_t;
+    v: [5] *CCD_PolytopeVertex;
+    e: [9] *CCD_PolytopeEdge;
     dist, dist2: ccd_real_t;
 
     nearest.* = null;
@@ -632,7 +660,7 @@ simplexToPolytope3 :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simp
         e[0] = ccdPtAddEdge(pt, v[0], v[1]);
         e[1] = ccdPtAddEdge(pt, v[1], v[2]);
         e[2] = ccdPtAddEdge(pt, v[2], v[0]);
-        nearest.* = cast(*ccd_pt_el_t)ccdPtAddFace(pt, e[0], e[1], e[2]);
+        nearest.* = cast(*CCD_PolytopeElement)ccdPtAddFace(pt, e[0], e[1], e[2]);
         if (nearest.* == null)
             return -2;
 
@@ -672,12 +700,12 @@ simplexToPolytope3 :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simp
 }
 
 /** Transforms simplex to polytope, two vertices required */
-simplexToPolytope2 :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simplex_t, pt: *ccd_pt_t, nearest: **ccd_pt_el_t) -> int {
-    a, b: *ccd_support_t;
+simplexToPolytope2 :: (obj1: *void, obj2: *void, ccd: *CCD_Config, simplex: *CCD_Simplex, pt: *CCD_Polytope, nearest: **CCD_PolytopeElement) -> int {
+    a, b: *CCD_Support;
     ab, ac, dir: Vector3;
-    supp: [4] ccd_support_t;
-    v: [6] *ccd_pt_vertex_t;
-    e: [12] *ccd_pt_edge_t;
+    supp: [4] CCD_Support;
+    v: [6] *CCD_PolytopeVertex;
+    e: [12] *CCD_PolytopeEdge;
     i: size_t;
     found: int;
 
@@ -693,7 +721,7 @@ simplexToPolytope2 :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simp
 
     // get first support point (any)
     found = 0;
-    for i : 0..ccd_points_on_sphere_len-1 { // (i = 0; i < ccd_points_on_sphere_len; i++)
+    for i : 0..ccd_points_on_sphere.count-1 { // (i = 0; i < ccd_points_on_sphere_len; i++)
         __ccdSupport(obj1, obj2, *ccd_points_on_sphere[i], ccd, *supp[0]);
         if (!ccdVec3Eq(*a.v, *supp[0].v) && !ccdVec3Eq(*b.v, *supp[0].v)){
             found = 1;
@@ -704,7 +732,7 @@ simplexToPolytope2 :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simp
     simplexToPolytope2_touching_contact :: () #expand {
         v[0] = ccdPtAddVertex(pt, a);
         v[1] = ccdPtAddVertex(pt, b);
-        nearest.* = cast(*ccd_pt_el_t)ccdPtAddEdge(pt, v[0], v[1]);
+        nearest.* = cast(*CCD_PolytopeElement)ccdPtAddEdge(pt, v[0], v[1]);
         if (nearest.* == null)
             `return -2;
 
@@ -777,10 +805,10 @@ simplexToPolytope2 :: (obj1: *void, obj2: *void, ccd: *ccd_t, simplex: *ccd_simp
 /** Expands polytope's tri by new vertex v. Triangle tri is replaced by
  *  three triangles each with one vertex in v. */
 /** Return 0 on success, -2 on memory allocation failure.*/
-expandPolytope :: (pt: *ccd_pt_t, el: *ccd_pt_el_t, newv: *ccd_support_t) -> int {
-    v: [5] *ccd_pt_vertex_t;
-    e: [8] *ccd_pt_edge_t;
-    f: [2] *ccd_pt_face_t;
+expandPolytope :: (pt: *CCD_Polytope, el: *CCD_PolytopeElement, newv: *CCD_Support) -> int {
+    v: [5] *CCD_PolytopeVertex;
+    e: [8] *CCD_PolytopeEdge;
+    f: [2] *CCD_PolytopeFace;
 
     // element can be either segment or triangle
     if el.type == CCD_PT_EDGE {
@@ -794,15 +822,15 @@ expandPolytope :: (pt: *ccd_pt_t, el: *ccd_pt_el_t, newv: *ccd_support_t) -> int
         // vertices which is exactly what is done in following code.
         //
 
-        ccdPtEdgeVertices(cast(*ccd_pt_edge_t)el, *v[0], *v[2]);
+        ccdPtEdgeVertices(cast(*CCD_PolytopeEdge)el, *v[0], *v[2]);
 
-        ccdPtEdgeFaces(cast(*ccd_pt_edge_t)el, *f[0], *f[1]);
+        ccdPtEdgeFaces(cast(*CCD_PolytopeEdge)el, *f[0], *f[1]);
 
         if (f[0]){
             ccdPtFaceEdges(f[0], *e[0], *e[1], *e[2]);
-            if (e[0] == cast(*ccd_pt_edge_t)el){
+            if (e[0] == cast(*CCD_PolytopeEdge)el){
                 e[0] = e[2];
-            }else if (e[1] == cast(*ccd_pt_edge_t)el){
+            }else if (e[1] == cast(*CCD_PolytopeEdge)el){
                 e[1] = e[2];
             }
             ccdPtEdgeVertices(e[0], *v[1], *v[3]);
@@ -819,9 +847,9 @@ expandPolytope :: (pt: *ccd_pt_t, el: *ccd_pt_el_t, newv: *ccd_support_t) -> int
 
             if (f[1]){
                 ccdPtFaceEdges(f[1], *e[2], *e[3], *e[4]);
-                if (e[2] == cast(*ccd_pt_edge_t)el){
+                if (e[2] == cast(*CCD_PolytopeEdge)el){
                     e[2] = e[4];
-                }else if (e[3] == cast(*ccd_pt_edge_t)el){
+                }else if (e[3] == cast(*CCD_PolytopeEdge)el){
                     e[3] = e[4];
                 }
                 ccdPtEdgeVertices(e[2], *v[3], *v[4]);
@@ -843,7 +871,7 @@ expandPolytope :: (pt: *ccd_pt_t, el: *ccd_pt_el_t, newv: *ccd_support_t) -> int
             ccdPtDelFace(pt, f[0]);
             if (f[1]){
                 ccdPtDelFace(pt, f[1]);
-                ccdPtDelEdge(pt, cast(*ccd_pt_edge_t)el);
+                ccdPtDelEdge(pt, cast(*CCD_PolytopeEdge)el);
             }
 
             e[4] = ccdPtAddEdge(pt, v[4], v[2]);
@@ -864,7 +892,7 @@ expandPolytope :: (pt: *ccd_pt_t, el: *ccd_pt_el_t, newv: *ccd_support_t) -> int
                     return -2;
                 }
             }else{
-                if (ccdPtAddFace(pt, e[4], e[5], cast(*ccd_pt_edge_t)el) == null)
+                if (ccdPtAddFace(pt, e[4], e[5], cast(*CCD_PolytopeEdge)el) == null)
                     return -2;
             }
         }
@@ -873,7 +901,7 @@ expandPolytope :: (pt: *ccd_pt_t, el: *ccd_pt_el_t, newv: *ccd_support_t) -> int
         // triangle that will be removed)
 
         // get triplet of surrounding edges and vertices of triangle face
-        ccdPtFaceEdges(cast(*ccd_pt_face_t)el, *e[0], *e[1], *e[2]);
+        ccdPtFaceEdges(cast(*CCD_PolytopeFace)el, *e[0], *e[1], *e[2]);
         ccdPtEdgeVertices(e[0], *v[0], *v[1]);
         ccdPtEdgeVertices(e[1], *v[2], *v[3]);
 
@@ -889,7 +917,7 @@ expandPolytope :: (pt: *ccd_pt_t, el: *ccd_pt_el_t, newv: *ccd_support_t) -> int
             v[2] = v[3];
 
         // remove triangle face
-        ccdPtDelFace(pt, cast(*ccd_pt_face_t)el);
+        ccdPtDelFace(pt, cast(*CCD_PolytopeFace)el);
 
         // expand triangle to tetrahedron
         v[3] = ccdPtAddVertex(pt, newv);
@@ -909,8 +937,7 @@ expandPolytope :: (pt: *ccd_pt_t, el: *ccd_pt_el_t, newv: *ccd_support_t) -> int
 
 /** Finds next support point (and stores it in out argument).
  *  Returns 0 on success, -1 otherwise */
-nextSupport :: (obj1: *void, obj2: *void, ccd: *ccd_t, el: *ccd_pt_el_t, out: *ccd_support_t) -> int
-{
+nextSupport :: (obj1: *void, obj2: *void, ccd: *CCD_Config, el: *CCD_PolytopeElement, out: *CCD_Support) -> int {
     a, b, c: *Vector3;
     dist: ccd_real_t;
 
@@ -933,13 +960,13 @@ nextSupport :: (obj1: *void, obj2: *void, ccd: *ccd_t, el: *ccd_pt_el_t, out: *c
 
     if (el.type == CCD_PT_EDGE){
         // fetch end points of edge
-        ccdPtEdgeVec3(cast(*ccd_pt_edge_t)el, *a, *b);
+        ccdPtEdgeVec3(cast(*CCD_PolytopeEdge)el, *a, *b);
 
         // get distance from segment
         dist = ccdVec3PointSegmentDist2(*out.v, a, b, null);
     }else{ // el.type == CCD_PT_FACE
         // fetch vertices of triangle face
-        ccdPtFaceVec3(cast(*ccd_pt_face_t)el, *a, *b, *c);
+        ccdPtFaceVec3(cast(*CCD_PolytopeFace)el, *a, *b, *c);
 
         // check if new point can significantly expand polytope
         dist = ccdVec3PointTriDist2(*out.v, a, b, c, null);

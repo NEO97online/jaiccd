@@ -19,63 +19,58 @@ CCD_PT_VERTEX :: 1;
 CCD_PT_EDGE   :: 2;
 CCD_PT_FACE   :: 3;
 
-
-__CCD_PT_EL :: struct {
-    type: int;           /*! type of element */
-    dist: ccd_real_t;    /*! distance from origin */
-    witness: Vector3;    /*! witness point of projection of origin */
-    list: ccd_list_t;    /*! list of elements of same type */
-}
-
 /**
  * General polytope element.
  * Could be vertex, edge or triangle.
  */
-ccd_pt_el_t :: struct {
-    using base: __CCD_PT_EL;
+CCD_PolytopeElement :: struct {
+    type: int;           /*! type of element */
+    dist: ccd_real_t;    /*! distance from origin */
+    witness: Vector3;    /*! witness point of projection of origin */
+    list: CCD_List;    /*! list of elements of same type */
 }
 
 /**
  * Polytope's vertex.
  */
-ccd_pt_vertex_t :: struct {
-    using base: __CCD_PT_EL;
+CCD_PolytopeVertex :: struct {
+    using base: CCD_PolytopeElement;
 
     id: int;
-    v: ccd_support_t;
-    edges: ccd_list_t; //!< List of edges
+    v: CCD_Support;
+    edges: CCD_List; //!< List of edges
 }
 
 /**
  * Polytope's edge.
  */
-ccd_pt_edge_t :: struct {
-    using base: __CCD_PT_EL;
+CCD_PolytopeEdge :: struct {
+    using base: CCD_PolytopeElement;
 
-    vertex: [2] *ccd_pt_vertex_t; //!< Reference to vertices
-    faces: [2] *ccd_pt_face_t; //!< Reference to faces
+    vertex: [2] *CCD_PolytopeVertex; //!< Reference to vertices
+    faces: [2] *CCD_PolytopeFace; //!< Reference to faces
 
-    vertex_list: [2] ccd_list_t; //!< List items in vertices' lists
+    vertex_list: [2] CCD_List; //!< List items in vertices' lists
 }
 
 /**
  * Polytope's triangle faces.
  */
-ccd_pt_face_t :: struct {
-    using base: __CCD_PT_EL;
+CCD_PolytopeFace :: struct {
+    using base: CCD_PolytopeElement;
 
-    edge: [3] *ccd_pt_edge_t; //!< Reference to surrounding edges
+    edge: [3] *CCD_PolytopeEdge; //!< Reference to surrounding edges
 }
 
 /**
  * Struct containing polytope.
  */
-ccd_pt_t :: struct {
-    vertices: ccd_list_t; //!< List of vertices
-    edges: ccd_list_t; //!< List of edges
-    faces: ccd_list_t; //!< List of faces
+CCD_Polytope :: struct {
+    vertices: CCD_List; //!< List of vertices
+    edges: CCD_List; //!< List of edges
+    faces: CCD_List; //!< List of faces
 
-    nearest: *ccd_pt_el_t;
+    nearest: *CCD_PolytopeElement;
     nearest_dist: ccd_real_t;
     nearest_type: int;
 }
@@ -84,8 +79,8 @@ ccd_pt_t :: struct {
 /**
  * Adds vertex to polytope and returns pointer to newly created vertex.
  */
-ccdPtAddVertexCoords :: inline (pt: *ccd_pt_t, x: ccd_real_t, y: ccd_real_t, z: ccd_real_t) -> *ccd_pt_vertex_t {
-    s: ccd_support_t;
+ccdPtAddVertexCoords :: inline (pt: *CCD_Polytope, x: ccd_real_t, y: ccd_real_t, z: ccd_real_t) -> *CCD_PolytopeVertex {
+    s: CCD_Support;
     ccdVec3Set(*s.v, x, y, z);
     return ccdPtAddVertex(pt, *s);
 }
@@ -94,10 +89,14 @@ ccdPtAddVertexCoords :: inline (pt: *ccd_pt_t, x: ccd_real_t, y: ccd_real_t, z: 
  * Deletes vertex from polytope.
  * Returns 0 on success, -1 otherwise.
  */
-ccdPtDelVertex :: inline (pt: *ccd_pt_t, v: *ccd_pt_vertex_t) -> int {
+ccdPtDelVertex :: inline (pt: *CCD_Polytope, v: *CCD_PolytopeVertex) -> int {
     // test if any edge is connected to this vertex
-    if (!ccdListEmpty(*v.edges))
+    if (!ccdListEmpty(*v.edges)) {
+        assert(false);
         return -1;
+    }
+
+    assert(v.type == CCD_PT_VERTEX);
 
     // delete vertex from main list
     ccdListDel(*v.list);
@@ -106,15 +105,21 @@ ccdPtDelVertex :: inline (pt: *ccd_pt_t, v: *ccd_pt_vertex_t) -> int {
         pt.nearest = null;
     }
 
-    free(v);
+    verts_removed += 1;
+
+    // free(v);
     return 0;
 }
 
-ccdPtDelEdge :: inline (pt: *ccd_pt_t, e: *ccd_pt_edge_t) -> int {
+ccdPtDelEdge :: inline (pt: *CCD_Polytope, e: *CCD_PolytopeEdge) -> int {
     // text if any face is connected to this edge (faces[] is always
     // aligned to lower indices)
-    if (e.faces[0] != null)
+    if (e.faces[0] != null) {
+        assert(false);
         return -1;
+    }
+
+    assert(e.type == CCD_PT_EDGE);
 
     // disconnect edge from lists of edges in vertex struct
     ccdListDel(*e.vertex_list[0]);
@@ -127,13 +132,17 @@ ccdPtDelEdge :: inline (pt: *ccd_pt_t, e: *ccd_pt_edge_t) -> int {
         pt.nearest = null;
     }
 
-    free(e);
+    edges_removed += 1;
+
+    // free(e);
     return 0;
 }
 
-ccdPtDelFace :: inline (pt: *ccd_pt_t, f: *ccd_pt_face_t) -> int {
-    e: *ccd_pt_edge_t;
+ccdPtDelFace :: inline (pt: *CCD_Polytope, f: *CCD_PolytopeFace) -> int {
+    e: *CCD_PolytopeEdge;
     i: size_t;
+
+    assert(f.type == CCD_PT_FACE);
 
     // remove face from edges' recerence lists
     for i : 0..2 { //(i = 0; i < 3; i++)
@@ -151,14 +160,16 @@ ccdPtDelFace :: inline (pt: *ccd_pt_t, f: *ccd_pt_face_t) -> int {
         pt.nearest = null;
     }
 
-    free(f);
+    faces_removed += 1;
+
+    // free(f);
     return 0;
 }
 
 /**
  * Returns vertices surrounding given triangle face.
  */
-ccdPtFaceVec3 :: inline (face: *ccd_pt_face_t, a: **Vector3, b: **Vector3, c: **Vector3) {
+ccdPtFaceVec3 :: inline (face: *CCD_PolytopeFace, a: **Vector3, b: **Vector3, c: **Vector3) {
     a.* = *face.edge[0].vertex[0].v.v;
     b.* = *face.edge[0].vertex[1].v.v;
 
@@ -170,7 +181,7 @@ ccdPtFaceVec3 :: inline (face: *ccd_pt_face_t, a: **Vector3, b: **Vector3, c: **
     }
 }
 
-ccdPtFaceVertices :: inline (face: *ccd_pt_face_t, a: **Vector3, b: **Vector3, c: **Vector3) {
+ccdPtFaceVertices :: inline (face: *CCD_PolytopeFace, a: **CCD_PolytopeVertex, b: **CCD_PolytopeVertex, c: **CCD_PolytopeVertex) {
     a.* = face.edge[0].vertex[0];
     b.* = face.edge[0].vertex[1];
 
@@ -182,29 +193,31 @@ ccdPtFaceVertices :: inline (face: *ccd_pt_face_t, a: **Vector3, b: **Vector3, c
     }
 }
 
-ccdPtFaceEdges :: inline (f: *ccd_pt_face_t, a: **Vector3, b: **Vector3, c: **Vector3) {
+ccdPtFaceEdges :: inline (f: *CCD_PolytopeFace, a: **CCD_PolytopeEdge, b: **CCD_PolytopeEdge, c: **CCD_PolytopeEdge) {
     a.* = f.edge[0];
     b.* = f.edge[1];
     c.* = f.edge[2];
 }
 
-ccdPtEdgeVec3 :: inline (e: *ccd_pt_edge_t, a: **Vector3, b: **Vector3) {
+ccdPtEdgeVec3 :: inline (e: *CCD_PolytopeEdge, a: **Vector3, b: **Vector3) {
     a.* = *e.vertex[0].v.v;
     b.* = *e.vertex[1].v.v;
 }
 
-ccdPtEdgeVertices :: inline (e: *ccd_pt_edge_t, a: **Vector3, b: **Vector3) {
+ccdPtEdgeVertices :: inline (e: *CCD_PolytopeEdge, a: **CCD_PolytopeVertex, b: **CCD_PolytopeVertex) {
     a.* = e.vertex[0];
     b.* = e.vertex[1];
 }
 
-ccdPtEdgeFaces :: inline (e: *ccd_pt_edge_t, f1: **ccd_pt_face_t, f2: **ccd_pt_face_t) {
+ccdPtEdgeFaces :: inline (e: *CCD_PolytopeEdge, f1: **CCD_PolytopeFace, f2: **CCD_PolytopeFace) {
     f1.* = e.faces[0];
     f2.* = e.faces[1];
 }
 
-_ccdPtNearestUpdate :: inline (pt: *ccd_pt_t, el: *ccd_pt_el_t) {
-    if (ccdEq(pt.nearest_dist, el.dist)){
+_ccdPtNearestUpdate :: inline (pt: *CCD_Polytope, el: *CCD_PolytopeElement) {
+    nearest := pt.nearest_dist;
+    el_dist := el.dist;
+    if (ccdEq(nearest, el_dist)){
         if (el.type < pt.nearest_type){
             pt.nearest = el;
             pt.nearest_dist = el.dist;
@@ -217,31 +230,29 @@ _ccdPtNearestUpdate :: inline (pt: *ccd_pt_t, el: *ccd_pt_el_t) {
     }
 }
 
-_ccdPtNearestRenew :: (pt: *ccd_pt_t) {
-    v: *ccd_pt_vertex_t;
-    e: *ccd_pt_edge_t;
-    f: *ccd_pt_face_t;
+_ccdPtNearestRenew :: (pt: *CCD_Polytope) {
+    v: *CCD_PolytopeVertex;
+    e: *CCD_PolytopeEdge;
+    f: *CCD_PolytopeFace;
 
     pt.nearest_dist = CCD_REAL_MAX;
     pt.nearest_type = 3;
     pt.nearest = null;
 
-    ccdListForEachEntry(*pt.vertices, v, ccd_pt_vertex_t, list, #code {
-        _ccdPtNearestUpdate(pt, cast(*ccd_pt_el_t)v);
+    ccdListForEachEntry(*pt.vertices, *v, CCD_PolytopeVertex, #code {
+        _ccdPtNearestUpdate(pt, cast(*CCD_PolytopeElement)v);
     });
 
-    ccdListForEachEntry(*pt.edges, e, ccd_pt_edge_t, list, #code {
-        _ccdPtNearestUpdate(pt, cast(*ccd_pt_el_t)e);
+    ccdListForEachEntry(*pt.edges, *e, CCD_PolytopeEdge, #code {
+        _ccdPtNearestUpdate(pt, cast(*CCD_PolytopeElement)e);
     });
 
-    ccdListForEachEntry(*pt.faces, f, ccd_pt_face_t, list, #code {
-        _ccdPtNearestUpdate(pt, cast(*ccd_pt_el_t)f);
+    ccdListForEachEntry(*pt.faces, *f, CCD_PolytopeFace, #code {
+        _ccdPtNearestUpdate(pt, cast(*CCD_PolytopeElement)f);
     });
 }
 
-
-
-ccdPtInit :: (pt: *ccd_pt_t) {
+ccdPtInit :: (pt: *CCD_Polytope) {
     ccdListInit(*pt.vertices);
     ccdListInit(*pt.edges);
     ccdListInit(*pt.faces);
@@ -251,32 +262,44 @@ ccdPtInit :: (pt: *ccd_pt_t) {
     pt.nearest_type = 3;
 }
 
-ccdPtDestroy :: (pt: *ccd_pt_t) {
-    f, f2: *ccd_pt_face_t;
-    e, e2: *ccd_pt_edge_t;
-    v, v2: *ccd_pt_vertex_t;
+ccdPtDestroy :: (pt: *CCD_Polytope) {
+    f, f2: *CCD_PolytopeFace;
+    e, e2: *CCD_PolytopeEdge;
+    v, v2: *CCD_PolytopeVertex;
 
     // first delete all faces
-    ccdListForEachEntrySafe(*pt.faces, f, ccd_pt_face_t, f2, ccd_pt_face_t, list, #code {
+    f = ccdListEntry(pt.faces.next, CCD_PolytopeFace);
+    f2 = ccdListEntry(f.list.next, CCD_PolytopeFace);
+    while *f.list != *pt.faces {
         ccdPtDelFace(pt, f);
-    });
+        f = f2;
+        f2 = ccdListEntry(f2.list.next, CCD_PolytopeFace);
+    }
 
     // delete all edges
-    ccdListForEachEntrySafe(*pt.edges, e, ccd_pt_edge_t, e2, ccd_pt_edge_t, list, #code {
+    e = ccdListEntry(pt.edges.next, CCD_PolytopeEdge);
+    e2 = ccdListEntry(e.list.next, CCD_PolytopeEdge);
+    while *e.list != *pt.edges {
         ccdPtDelEdge(pt, e);
-    });
+        e = e2;
+        e2 = ccdListEntry(e2.list.next, CCD_PolytopeEdge);
+    }
 
     // delete all vertices
-    ccdListForEachEntrySafe(*pt.vertices, v, ccd_pt_vertex_t, v2, ccd_pt_vertex_t, list, #code {
+    v = ccdListEntry(pt.vertices.next, CCD_PolytopeVertex);
+    v2 = ccdListEntry(v.list.next, CCD_PolytopeVertex);
+    while *v.list != *pt.vertices {
         ccdPtDelVertex(pt, v);
-    });
+        v = v2;
+        v2 = ccdListEntry(v2.list.next, CCD_PolytopeVertex);
+    }
 }
 
 
-ccdPtAddVertex :: (pt: *ccd_pt_t, v: *ccd_support_t) -> *ccd_pt_vertex_t {
-    vert: *ccd_pt_vertex_t;
+ccdPtAddVertex :: (pt: *CCD_Polytope, v: *CCD_Support) -> *CCD_PolytopeVertex {
+    vert: *CCD_PolytopeVertex;
 
-    vert = CCD_ALLOC(ccd_pt_vertex_t);
+    vert = New(CCD_PolytopeVertex, allocator=temp);
     if (vert == null)
         return null;
 
@@ -292,7 +315,9 @@ ccdPtAddVertex :: (pt: *ccd_pt_t, v: *ccd_support_t) -> *ccd_pt_vertex_t {
     ccdListAppend(*pt.vertices, *vert.list);
 
     // update position in .nearest array
-    _ccdPtNearestUpdate(pt, cast(*ccd_pt_el_t)vert);
+    _ccdPtNearestUpdate(pt, cast(*CCD_PolytopeElement)vert);
+
+    verts_added += 1;
 
     return vert;
 }
@@ -300,25 +325,25 @@ ccdPtAddVertex :: (pt: *ccd_pt_t, v: *ccd_support_t) -> *ccd_pt_vertex_t {
 /**
  * Adds edge to polytope.
  */
-ccdPtAddEdge :: (pt: *ccd_pt_t, v1: *ccd_pt_vertex_t, v2: *ccd_pt_vertex_t) -> *ccd_pt_edge_t {
+ccdPtAddEdge :: (pt: *CCD_Polytope, v1: *CCD_PolytopeVertex, v2: *CCD_PolytopeVertex) -> *CCD_PolytopeEdge {
     a, b: *Vector3;
-    edge: *ccd_pt_edge_t;
+    edge: *CCD_PolytopeEdge;
 
     if (v1 == null || v2 == null)
         return null;
 
-    edge = CCD_ALLOC(ccd_pt_edge_t);
+    edge = New(CCD_PolytopeEdge, allocator=temp);
     if (edge == null)
         return null;
 
     edge.type = CCD_PT_EDGE;
     edge.vertex[0] = v1;
     edge.vertex[1] = v2;
-    edge.faces[0] = edge.faces[1] = null;
+    edge.faces[0], edge.faces[1] = null;
 
     a = *edge.vertex[0].v.v;
     b = *edge.vertex[1].v.v;
-    edge.dist = ccdVec3PointSegmentDist2(ccd_vec3_origin, a, b, *edge.witness);
+    edge.dist = ccdVec3PointSegmentDist2(*ccd_vec3_origin, a, b, *edge.witness);
 
     ccdListAppend(*edge.vertex[0].edges, *edge.vertex_list[0]);
     ccdListAppend(*edge.vertex[1].edges, *edge.vertex_list[1]);
@@ -326,7 +351,9 @@ ccdPtAddEdge :: (pt: *ccd_pt_t, v1: *ccd_pt_vertex_t, v2: *ccd_pt_vertex_t) -> *
     ccdListAppend(*pt.edges, *edge.list);
 
     // update position in .nearest array
-    _ccdPtNearestUpdate(pt, cast(*ccd_pt_el_t)edge);
+    _ccdPtNearestUpdate(pt, cast(*CCD_PolytopeElement)edge);
+
+    edges_added += 1;
 
     return edge;
 }
@@ -334,16 +361,16 @@ ccdPtAddEdge :: (pt: *ccd_pt_t, v1: *ccd_pt_vertex_t, v2: *ccd_pt_vertex_t) -> *
 /**
  * Adds face to polytope.
  */
-ccdPtAddFace :: (pt: ccd_pt_t, e1: *ccd_pt_edge_t, e2: *ccd_pt_edge_t, e3: *ccd_pt_edge_t) -> *ccd_pt_face_t {
+ccdPtAddFace :: (pt: *CCD_Polytope, e1: *CCD_PolytopeEdge, e2: *CCD_PolytopeEdge, e3: *CCD_PolytopeEdge) -> *CCD_PolytopeFace {
     a, b, c: *Vector3;
-    face: *ccd_pt_face_t;
-    e: *ccd_pt_edge_t;
+    face: *CCD_PolytopeFace;
+    e: *CCD_PolytopeEdge;
     i: size_t;
 
     if (e1 == null || e2 == null || e3 == null)
         return null;
 
-    face = CCD_ALLOC(ccd_pt_face_t);
+    face = New(CCD_PolytopeFace, allocator=temp);
     if (face == null)
         return null;
 
@@ -362,7 +389,7 @@ ccdPtAddFace :: (pt: ccd_pt_t, e1: *ccd_pt_edge_t, e2: *ccd_pt_edge_t, e3: *ccd_
     }else{
         c = *e.vertex[1].v.v;
     }
-    face.dist = ccdVec3PointTriDist2(ccd_vec3_origin, a, b, c, *face.witness);
+    face.dist = ccdVec3PointTriDist2(*ccd_vec3_origin, a, b, c, *face.witness);
 
     for i : 0..2 { // (i = 0; i < 3; i++){
         if (face.edge[i].faces[0] == null){
@@ -375,7 +402,9 @@ ccdPtAddFace :: (pt: ccd_pt_t, e1: *ccd_pt_edge_t, e2: *ccd_pt_edge_t, e3: *ccd_
     ccdListAppend(*pt.faces, *face.list);
 
     // update position in .nearest array
-    _ccdPtNearestUpdate(pt, cast(*ccd_pt_el_t)face);
+    _ccdPtNearestUpdate(pt, cast(*CCD_PolytopeElement)face);
+
+    faces_added += 1;
 
     return face;
 }
@@ -383,27 +412,27 @@ ccdPtAddFace :: (pt: ccd_pt_t, e1: *ccd_pt_edge_t, e2: *ccd_pt_edge_t, e3: *ccd_
 /**
  * Recompute distances from origin for all elements in pt.
  */
-ccdPtRecomputeDistances :: (pt: *ccd_pt_t) {
-    v: *ccd_pt_vertex_t;
-    e: *ccd_pt_edge_t;
-    f: *ccd_pt_face_t;
+ccdPtRecomputeDistances :: (pt: *CCD_Polytope) {
+    v: *CCD_PolytopeVertex;
+    e: *CCD_PolytopeEdge;
+    f: *CCD_PolytopeFace;
     a, b, c: *Vector3;
     dist: ccd_real_t;
 
-    ccdListForEachEntry(*pt.vertices, v, ccd_pt_vertex_t, list, #code {
+    ccdListForEachEntry(*pt.vertices, v, CCD_PolytopeVertex, list, #code {
         dist = ccdVec3Len2(*v.v.v);
         v.dist = dist;
         ccdVec3Copy(*v.witness, *v.v.v);
     });
 
-    ccdListForEachEntry(*pt.edges, e, ccd_pt_edge_t, list, #code {
+    ccdListForEachEntry(*pt.edges, e, CCD_PolytopeEdge, list, #code {
         a = *e.vertex[0].v.v;
         b = *e.vertex[1].v.v;
         dist = ccdVec3PointSegmentDist2(ccd_vec3_origin, a, b, *e.witness);
         e.dist = dist;
     });
 
-    ccdListForEachEntry(*pt.faces, f, ccd_pt_face_t, list, #code {
+    ccdListForEachEntry(*pt.faces, f, CCD_PolytopeFace, list, #code {
         // obtain triplet of vertices
         a = *f.edge[0].vertex[0].v.v;
         b = *f.edge[0].vertex[1].v.v;
@@ -423,7 +452,7 @@ ccdPtRecomputeDistances :: (pt: *ccd_pt_t) {
 /**
  * Returns nearest element to origin.
  */
-ccdPtNearest :: (pt: *ccd_pt_t) -> *ccd_pt_el_t {
+ccdPtNearest :: (pt: *CCD_Polytope) -> *CCD_PolytopeElement {
     if (!pt.nearest){
         _ccdPtNearestRenew(pt);
     }
@@ -433,7 +462,7 @@ ccdPtNearest :: (pt: *ccd_pt_t) -> *ccd_pt_el_t {
 
 // JAI: these are just debug functions i think so we probably dont need em rn.
 
-// ccdPtDumpSVT :: (pt: *ccd_pt_t, fn: *char) { // fn should be what?? it was a `const char *fn`
+// ccdPtDumpSVT :: (pt: *CCD_Polytope, fn: *char) { // fn should be what?? it was a `const char *fn`
 //     FILE *fout;
 
 //     fout = fopen(fn, "a");
@@ -445,30 +474,30 @@ ccdPtNearest :: (pt: *ccd_pt_t) -> *ccd_pt_el_t {
 //     fclose(fout);
 // }
 
-// void ccdPtDumpSVT2(ccd_pt_t *pt, FILE *fout)
+// void ccdPtDumpSVT2(CCD_Polytope *pt, FILE *fout)
 // {
-//     ccd_pt_vertex_t *v, *a, *b, *c;
-//     ccd_pt_edge_t *e;
-//     ccd_pt_face_t *f;
+//     CCD_PolytopeVertex *v, *a, *b, *c;
+//     CCD_PolytopeEdge *e;
+//     CCD_PolytopeFace *f;
 //     size_t i;
 
 //     fprintf(fout, "-----\n");
 
 //     fprintf(fout, "Points:\n");
 //     i = 0;
-//     ccdListForEachEntry(&pt->vertices, v, ccd_pt_vertex_t, list){
+//     ccdListForEachEntry(&pt->vertices, v, CCD_PolytopeVertex, list){
 //         v->id = i++;
 //         fprintf(fout, "%lf %lf %lf\n",
 //                 ccdVec3X(&v->v.v), ccdVec3Y(&v->v.v), ccdVec3Z(&v->v.v));
 //     }
 
 //     fprintf(fout, "Edges:\n");
-//     ccdListForEachEntry(&pt->edges, e, ccd_pt_edge_t, list){
+//     ccdListForEachEntry(&pt->edges, e, CCD_PolytopeEdge, list){
 //         fprintf(fout, "%d %d\n", e->vertex[0]->id, e->vertex[1]->id);
 //     }
 
 //     fprintf(fout, "Faces:\n");
-//     ccdListForEachEntry(&pt->faces, f, ccd_pt_face_t, list){
+//     ccdListForEachEntry(&pt->faces, f, CCD_PolytopeFace, list){
 //         a = f->edge[0]->vertex[0];
 //         b = f->edge[0]->vertex[1];
 //         c = f->edge[1]->vertex[0];

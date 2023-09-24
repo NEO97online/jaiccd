@@ -19,21 +19,18 @@
  * Functions and macros required for memory allocation.
  */
 
-/* Memory allocation: */
-__CCD_ALLOC_MEMORY :: (type: Type, ptr_old: *void, size: size_t) {
-    cast(*type)realloc(ptr_old, (size));
-}
-
 /** Allocate memory for one element of type.  */
-CCD_ALLOC :: (type: Type) #expand {
-    __CCD_ALLOC_MEMORY(type, null, size_of(type))
+CCD_ALLOC :: ($T: Type) -> *T {
+    return talloc(size_of(T));
 }
 
-/** Allocate memory for array of elements of type type.  */
-CCD_ALLOC_ARR :: (type: Type, num_elements: int) #expand {
-    __CCD_ALLOC_MEMORY(type, null, size_of(type) * num_elements)
-}
+// JAI: not used ?
+// /** Allocate memory for array of elements of type type.  */
+// CCD_ALLOC_ARR :: ($type: Type, num_elements: u64) -> *type {
+//     return __CCD_ALLOC_MEMORY(type, size_of(type) * xx num_elements);
+// }
 
-CCD_REALLOC_ARR :: (ptr: *void, type: Type, num_elements: int) #expand {
-    __CCD_ALLOC_MEMORY(type, ptr, size_of(type) * num_elements)
-}
+// JAI: not used ?
+// CCD_REALLOC_ARR :: (ptr: *void, $type: Type, num_elements: int) -> *type {
+//     return __CCD_ALLOC_MEMORY(type, ptr, size_of(type) * num_elements);
+// }

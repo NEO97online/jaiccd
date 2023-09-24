@@ -15,14 +15,14 @@
  *  See the License for more information.
  */
 
-ccd_support_t :: struct {
+CCD_Support :: struct {
     v: Vector3;  //!< Support point in minkowski sum
     v1: Vector3; //!< Support point in obj1
     v2: Vector3; //!< Support point in obj2
 };
 
 /**** INLINES ****/
-ccdSupportCopy :: inline (d: *ccd_support_t, s: *ccd_support_t) {
+ccdSupportCopy :: inline (d: *CCD_Support, s: *CCD_Support) {
     d.* = s.*;
 }
 
@@ -30,7 +30,7 @@ ccdSupportCopy :: inline (d: *ccd_support_t, s: *ccd_support_t) {
  * Computes support point of obj1 and obj2 in direction dir.
  * Support point is returned via supp.
  */
-__ccdSupport :: (obj1: *void, obj2: *void, _dir: *Vector3, ccd: *ccd_t, supp: *ccd_support_t) {
+__ccdSupport :: (obj1: *void, obj2: *void, _dir: *Vector3, ccd: *CCD_Config, supp: *CCD_Support) {
     dir: Vector3;
 
     ccdVec3Copy(*dir, _dir);

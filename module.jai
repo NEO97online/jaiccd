@@ -1,4 +1,4 @@
-CCD_INIT :: (ccd: *ccd_t) {
+CCD_INIT :: (ccd: *CCD_Config) {
     ccd.first_dir = ccdFirstDirDefault;
     ccd.support1 = null;
     ccd.support2 = null;
@@ -13,6 +13,11 @@ CCD_INIT :: (ccd: *ccd_t) {
 
 #scope_module
 
+#import "Basic";
+#import "Sort";
+
 size_t :: u64;
+
+_ccd_prefetch :: (a: Any) {}
 
 #load "ccd.jai";
